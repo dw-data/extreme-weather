@@ -1,0 +1,90 @@
+---
+title: "Who is most affected by extreme weather?"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+setwd("/Users/schachtk/OneDrive - Deutsche Welle/2407 extreme weather/")
+library("needs")
+needs(ggbeeswarm, tidyverse)
+```
+
+# Climate hazard cities questionnaire
+Source: https://data.cdp.net/Climate-Hazards/2023-Cities-Climate-Hazards/rng4-m4ks/about_data
+
+## Read data
+
+
+```{r}
+d = read.csv("data/raw/2023_Cities_Climate_Hazards_20241007.csv")
+
+#filter for cities over 1m population
+d1m = d %>% filter(Current.or.most.recent.population.size >= 10^6)
+```
+
+
+Unite hazards into three groups: heat, rain, flooding and storms
+
+```{r}
+d1m = d1m %>% 
+  mutate(label =
+           case_match(Climate.related.hazards,
+                      c("Extreme heat", "Heat stress", "Other, please specify: Extreme Hot Days") ~ "Heat",
+                      c("Heavy precipitation") ~"Rain",
+                      c("Urban flooding", "River flooding", "Coastal flooding (incl. sea level rise)") ~ "Flooding",
+                      c("Hurricanes, cyclones, and/or typhoons", "Storm", "Extreme wind", "Other, please specify: Tornadoes") ~ "Storms",
+                      .default = "Others"))
+
+```
+
+
+# Impact frequencies of hazards
+
+```{r}
+impact = d1m %>%
+  mutate(impact = ifelse(grepl("Medium",Current.magnitude.of.impact.of.hazard), "Medium", Current.magnitude.of.impact.of.hazard) %>% #unite "Medium high", "Medium" and "Medium Low" to "Medium"
+           factor(levels = c("High","Medium", "Low","Do not know","Question not applicable"))) %>%
+  count(label, impact) %>%
+  pivot_wider(values_from = n, names_from = impact)
+
+write.csv2(impact, "data/processed/cdp_cities_impact_byhazard.csv",row.names = F)
+```
+
+
+#Most vulnerable groups by label
+
+```{r}
+vulnerable = d1m %>%
+  select(label, vulnerable = Vulnerable.population.groups.most.exposed) %>%
+  separate_longer_delim(.,vulnerable, "; ") %>% #separate groups into one row each
+  mutate(vulnerable = ifelse(vulnerable %in% c("Low-income households","Elderly","Children and youth"  ,"Marginalized/minority communities","Vulnerable health groups","Women and girls","Outdoor workers","Indigenous peoples","Frontline workers","","Do not know"), vulnerable, "Other groups")) %>%
+  count(label, vulnerable, sort = T) %>% 
+  pivot_wider(names_from = label, values_from = n, values_fill = 0)
+write.csv2(vulnerable, "data/processed/cdp_cities_vulnerable_byhazard.csv",row.names = F)
+
+```
+
+
+# World Risk Report
+Source: https://weltrisikobericht.de/worldriskreport/
+Trend dataset: https://data.humdata.org/dataset/worldriskindex
+
+How many people are exposed to riverine floods, and how vulnerable is their country to these hazards' effects?
+
+Data variable code:
+- EI_04c: Riverine Floodings: Annually Averaged Population Exposed To Severe Intensity (Inundation Height 1.0 m Or Higher): Number
+- EI_04d: Riverine Floodings: Annually Averaged Population Exposed To Severe Intensity (Inundation Height 1.0 m Or Higher): Percent
+
+```{r}
+#country metadata
+unc = read.csv2("data/raw/UNSD — Methodology.csv") %>% 
+  select(ISO3.Code = ISO.alpha3.Code, Region.Name, Sub.region.Name)
+
+flood_exposure = read.csv("data/raw/worldriskindex-trend.csv") %>% 
+  filter(Year == 2023) %>% 
+  select(WRI.Country, ISO3.Code, V, matches("EI_04[cd]_Base",.)) %>% 
+  left_join(unc, by = join_by(ISO3.Code))
+
+write.csv2(flood_exposure, "data/processed/wrr_flooding_exposure_vulnerability.csv",row.names = F)
+
+```
